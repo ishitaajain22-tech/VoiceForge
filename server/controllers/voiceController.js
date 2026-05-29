@@ -27,7 +27,7 @@ async function readElevenLabsError(response) {
 
 export async function cloneVoice(request, response, next) {
   try {
-    const apiKey = requireApiKey(request);
+    const apiKey = requireApiKey();
     const audioFile = request.file;
 
     if (!audioFile) {
@@ -64,7 +64,7 @@ export async function cloneVoice(request, response, next) {
 
 export async function speak(request, response, next) {
   try {
-    const apiKey = requireApiKey(request);
+    const apiKey = requireApiKey();
     const { text, voice_id: voiceId } = request.body;
 
     if (!text || !voiceId) {
