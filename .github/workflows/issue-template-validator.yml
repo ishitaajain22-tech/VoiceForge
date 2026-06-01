@@ -1,0 +1,191 @@
+name: Issue Template Validator
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: issue-template-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.event.issue.pull_request == null && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate issue template and labels
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue = context.payload.issue;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = issue.number;
+            const username = issue.user.login;
+            const body = issue.body || '';
+
+            const labelDefinitions = {
+              gssoc: '0E8A16',
+              nsoc: '1D76DB',
+              ssoc: '5319E7',
+              elusoc: 'FBCA04',
+              bug: 'D73A4A',
+              enhancement: 'A2EEEF',
+              'needs-template': 'B60205',
+              'needs-quality': 'D4C5F9'
+            };
+
+            async function ensureLabel(name) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+              } catch (error) {
+                if (error.status === 404) {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name,
+                    color: labelDefinitions[name] || 'EDEDED'
+                  });
+                } else {
+                  throw error;
+                }
+              }
+            }
+
+            async function addLabels(labels) {
+              for (const label of labels) await ensureLabel(label);
+              if (labels.length > 0) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number, labels });
+              }
+            }
+
+            async function removeLabel(name) {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number, name });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+
+            async function assignAuthor() {
+              try {
+                await github.rest.issues.addAssignees({
+                  owner,
+                  repo,
+                  issue_number,
+                  assignees: [username]
+                });
+              } catch (error) {
+                core.warning(`Could not assign @${username}: ${error.message}`);
+              }
+            }
+
+            const programs = [
+              { name: 'GSSoC', label: 'gssoc', pattern: /\bGSSoC\b/i },
+              { name: 'NSOC', label: 'nsoc', pattern: /\bNSOC\b/i },
+              { name: 'SSOC', label: 'ssoc', pattern: /\bSSOC\b/i },
+              { name: 'ELUSOC', label: 'elusoc', pattern: /\bELUSOC\b/i }
+            ];
+
+            const matchedProgram = programs.find(program => program.pattern.test(body));
+            const isBugTemplate =
+              /##.*Describe the bug/i.test(body) &&
+              /##.*Steps to Reproduce/i.test(body) &&
+              /##.*Expected Behavior/i.test(body) &&
+              /##.*Actual Behavior/i.test(body);
+            const isFeatureTemplate =
+              /##.*Feature Description/i.test(body) &&
+              /##.*Problem It Solves/i.test(body) &&
+              /##.*Proposed Solution/i.test(body) &&
+              /##.*Acceptance Criteria/i.test(body);
+
+            const templateProblems = [];
+            const qualityProblems = [];
+            const labelsToAdd = [];
+
+            if (!matchedProgram) {
+              templateProblems.push('Please select one program template: GSSoC, NSOC, SSOC, or ELUSOC.');
+            } else {
+              labelsToAdd.push(matchedProgram.label);
+            }
+
+            if (!isBugTemplate && !isFeatureTemplate) {
+              templateProblems.push('Please use the mandatory bug report or feature request issue template.');
+            }
+
+            if (isBugTemplate) labelsToAdd.push('bug');
+            if (isFeatureTemplate) labelsToAdd.push('enhancement');
+
+            if ((body || '').replace(/<!--[\s\S]*?-->/g, '').trim().length < 80) {
+              qualityProblems.push('Please add enough detail so maintainers can review this issue.');
+              labelsToAdd.push('needs-quality');
+            }
+
+            if (templateProblems.length > 0) {
+              labelsToAdd.push('needs-template');
+            }
+
+            await addLabels([...new Set(labelsToAdd)]);
+
+            if (templateProblems.length === 0) {
+              await removeLabel('needs-template');
+            }
+
+            if (qualityProblems.length === 0) {
+              await removeLabel('needs-quality');
+            }
+
+            const problems = [...templateProblems, ...qualityProblems];
+
+            const marker = '<!-- voiceforge-issue-template-validator -->';
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100
+            });
+            const existing = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body &&
+              comment.body.includes(marker)
+            );
+
+            if (problems.length === 0) {
+              await assignAuthor();
+              if (existing) {
+                await github.rest.issues.deleteComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id
+                });
+              }
+              return;
+            }
+
+            const commentBody =
+              `${marker}\n` +
+              `## Template Update Needed\n\n` +
+              `Hi @${username}, thanks for opening this issue. VoiceForge requires contributors to use the program issue templates.\n\n` +
+              problems.map(problem => `- ${problem}`).join('\n') +
+              `\n\nPlease edit this issue using the correct template. This comment updates automatically after the issue is fixed.`;
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body: commentBody
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body: commentBody
+              });
+            }
