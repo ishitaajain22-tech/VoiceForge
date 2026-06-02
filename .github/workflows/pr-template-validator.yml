@@ -43,9 +43,18 @@ jobs:
               accessibility: '7057FF',
               ci: 'C5DEF5',
               refactor: 'FBCA04',
+              client: '1D76DB',
+              server: '5319E7',
+              'pr-validated': '0E8A16',
+              'template-ok': 'C2E0C6',
+              'linked-issue-ok': 'C2E0C6',
+              'assignee-match': 'C2E0C6',
+              'docs-ok': 'C2E0C6',
               'needs-template': 'B60205',
               'needs-quality': 'D4C5F9',
               'needs-linked-issue': 'D93F0B',
+              'needs-assignee-match': 'D93F0B',
+              'needs-title': 'D93F0B',
               'size/xs': 'C2E0C6',
               'size/s': 'BFDADC',
               'size/m': 'D4C5F9',
@@ -85,6 +94,10 @@ jobs:
               }
             }
 
+            async function removeLabels(labels) {
+              for (const label of labels) await removeLabel(label);
+            }
+
             async function assignAuthor() {
               try {
                 await github.rest.issues.addAssignees({
@@ -105,6 +118,7 @@ jobs:
               { name: 'ELUSOC', label: 'ELUSOC', pattern: /\bELUSOC\b/i }
             ];
 
+            const programLabels = programs.map(program => program.label);
             const matchedProgram = programs.find(program => program.pattern.test(body));
             const requiredSections = [
               /##.*Program/i,
@@ -114,30 +128,79 @@ jobs:
               /##.*How to Test/i,
               /##.*Checklist/i
             ];
-            const linkedIssueRegex = /(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+#\d+/i;
+            const linkedIssueRegex = /\b(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+#(\d+)/gi;
             const conventionalTitleRegex = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore)(\([^)]+\))?: .+/i;
 
             const problems = [];
-            const labelsToAdd = [];
+            const statusLabelsToAdd = [];
+            const neutralLabelsToAdd = [];
+            const needsLabelsToAdd = [];
+            const linkedIssueNumbers = [...new Set([...body.matchAll(linkedIssueRegex)].map(match => Number(match[2])))];
+            const linkedIssues = [];
 
             if (!matchedProgram) {
               problems.push('Select a program PR template: GSSoC, NSOC, SSOC, or ELUSOC.');
-            } else {
-              labelsToAdd.push(matchedProgram.label);
             }
 
             if (!requiredSections.every(section => section.test(body))) {
               problems.push('Use the mandatory VoiceForge PR template and keep all required sections.');
-              labelsToAdd.push('needs-template');
+              needsLabelsToAdd.push('needs-template');
             }
 
-            if (!linkedIssueRegex.test(body)) {
+            if (linkedIssueNumbers.length === 0) {
               problems.push('Link the related issue using `Closes #issue-number`.');
-              labelsToAdd.push('needs-linked-issue');
+              needsLabelsToAdd.push('needs-linked-issue');
+            } else {
+              for (const linkedIssueNumber of linkedIssueNumbers) {
+                try {
+                  const { data: linkedIssue } = await github.rest.issues.get({
+                    owner,
+                    repo,
+                    issue_number: linkedIssueNumber
+                  });
+
+                  if (linkedIssue.pull_request) {
+                    problems.push(`#${linkedIssueNumber} is a pull request. Please link the issue this PR resolves.`);
+                    needsLabelsToAdd.push('needs-linked-issue');
+                  } else {
+                    linkedIssues.push(linkedIssue);
+                  }
+                } catch (error) {
+                  if (error.status === 404) {
+                    problems.push(`Linked issue #${linkedIssueNumber} was not found.`);
+                    needsLabelsToAdd.push('needs-linked-issue');
+                  } else {
+                    throw error;
+                  }
+                }
+              }
+            }
+
+            if (linkedIssues.length > 0) {
+              const issueNumbersWithoutAuthorAssignment = linkedIssues
+                .filter(linkedIssue => !(linkedIssue.assignees || []).some(assignee => assignee.login.toLowerCase() === username.toLowerCase()))
+                .map(linkedIssue => `#${linkedIssue.number}`);
+
+              if (issueNumbersWithoutAuthorAssignment.length > 0) {
+                problems.push(`The PR author @${username} must be assigned on the linked issue before this PR can be validated: ${issueNumbersWithoutAuthorAssignment.join(', ')}.`);
+                needsLabelsToAdd.push('needs-assignee-match');
+              }
+
+              if (matchedProgram) {
+                const issuesWithoutMatchingProgram = linkedIssues
+                  .filter(linkedIssue => !(linkedIssue.labels || []).some(label => label.name === matchedProgram.label))
+                  .map(linkedIssue => `#${linkedIssue.number}`);
+
+                if (issuesWithoutMatchingProgram.length > 0) {
+                  problems.push(`The PR program template must match the program label on the linked issue: ${issuesWithoutMatchingProgram.join(', ')}.`);
+                  needsLabelsToAdd.push('needs-linked-issue');
+                }
+              }
             }
 
             if (!conventionalTitleRegex.test(title)) {
               problems.push('Use a Conventional Commits PR title, for example `feat: add voice preview`.');
+              needsLabelsToAdd.push('needs-title');
             }
 
             const cleanedBody = body
@@ -148,7 +211,7 @@ jobs:
 
             if (cleanedBody.length < 120) {
               problems.push('Please fill in the PR template with enough detail for maintainers to review it.');
-              labelsToAdd.push('needs-quality');
+              needsLabelsToAdd.push('needs-quality');
             }
 
             const { data: files } = await github.rest.pulls.listFiles({
@@ -165,26 +228,47 @@ jobs:
               totalChanges <= 300 ? 'size/m' :
               totalChanges <= 700 ? 'size/l' :
               'size/xl';
-            labelsToAdd.push(sizeLabel);
+            neutralLabelsToAdd.push(sizeLabel);
 
             const changedPaths = files.map(file => file.filename);
-            if (changedPaths.some(path => path.startsWith('client/'))) labelsToAdd.push('client');
-            if (changedPaths.some(path => path.startsWith('server/'))) labelsToAdd.push('server');
-            if (changedPaths.some(path => path.startsWith('.github/'))) labelsToAdd.push('ci');
-            if (/documentation|docs|readme/i.test(body) || changedPaths.some(path => /\.md$/i.test(path))) labelsToAdd.push('documentation');
-            if (/accessibility|a11y/i.test(body)) labelsToAdd.push('accessibility');
-            if (/bug fix/i.test(body)) labelsToAdd.push('bug');
-            if (/new feature/i.test(body)) labelsToAdd.push('enhancement');
-            if (/refactor|cleanup/i.test(body)) labelsToAdd.push('refactor');
+            const hasDocumentationChange = /documentation|docs|readme/i.test(body) || changedPaths.some(path => /\.md$/i.test(path));
+            if (changedPaths.some(path => path.startsWith('client/'))) neutralLabelsToAdd.push('client');
+            if (changedPaths.some(path => path.startsWith('server/'))) neutralLabelsToAdd.push('server');
+            if (changedPaths.some(path => path.startsWith('.github/'))) neutralLabelsToAdd.push('ci');
+            if (hasDocumentationChange) neutralLabelsToAdd.push('documentation');
+            if (/accessibility|a11y/i.test(body)) neutralLabelsToAdd.push('accessibility');
+            if (/bug fix/i.test(body)) neutralLabelsToAdd.push('bug');
+            if (/new feature/i.test(body)) neutralLabelsToAdd.push('enhancement');
+            if (/refactor|cleanup/i.test(body)) neutralLabelsToAdd.push('refactor');
 
-            await addLabels([...new Set(labelsToAdd)]);
+            if (problems.length === 0) {
+              statusLabelsToAdd.push(
+                matchedProgram.label,
+                'pr-validated',
+                'template-ok',
+                'linked-issue-ok',
+                'assignee-match'
+              );
+              if (hasDocumentationChange) statusLabelsToAdd.push('docs-ok');
+            }
+
+            await addLabels([...new Set([...neutralLabelsToAdd, ...needsLabelsToAdd, ...statusLabelsToAdd])]);
 
             for (const label of ['size/xs', 'size/s', 'size/m', 'size/l', 'size/xl']) {
               if (label !== sizeLabel) await removeLabel(label);
             }
-            if (linkedIssueRegex.test(body)) await removeLabel('needs-linked-issue');
+            if (linkedIssueNumbers.length > 0 && !needsLabelsToAdd.includes('needs-linked-issue')) await removeLabel('needs-linked-issue');
+            if (linkedIssues.length > 0 && !needsLabelsToAdd.includes('needs-assignee-match')) await removeLabel('needs-assignee-match');
             if (requiredSections.every(section => section.test(body))) await removeLabel('needs-template');
             if (cleanedBody.length >= 120) await removeLabel('needs-quality');
+            if (conventionalTitleRegex.test(title)) await removeLabel('needs-title');
+
+            if (problems.length === 0) {
+              await removeLabels(programLabels.filter(label => label !== matchedProgram.label));
+              await removeLabels(['needs-template', 'needs-quality', 'needs-linked-issue', 'needs-assignee-match', 'needs-title']);
+            } else {
+              await removeLabels([...programLabels, 'pr-validated', 'template-ok', 'linked-issue-ok', 'assignee-match', 'docs-ok']);
+            }
 
             const marker = '<!-- voiceforge-pr-template-validator -->';
             const comments = await github.paginate(github.rest.issues.listComments, {
@@ -214,7 +298,7 @@ jobs:
             const commentBody =
               `${marker}\n` +
               `## PR Update Needed\n\n` +
-              `Hi @${username}, thanks for the PR. VoiceForge requires the program PR template and a linked issue before review.\n\n` +
+              `Hi @${username}, thanks for the PR. VoiceForge needs the PR template, closing issue, and contributor assignment to line up before this can enter maintainer review.\n\n` +
               problems.map(problem => `- ${problem}`).join('\n') +
               `\n\nPlease edit the PR description/title and push updates. This comment updates automatically.`;
 
