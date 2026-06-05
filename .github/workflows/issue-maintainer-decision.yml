@@ -26,6 +26,7 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const issue_number = issue.number;
+            const action = context.payload.action;
 
             const labelDefinitions = {
               duplicate: 'CFD3D7',
@@ -122,6 +123,30 @@ jobs:
               for (const name of names) await removeLabel(name);
             }
 
+            function sleep(ms) {
+              return new Promise(resolve => setTimeout(resolve, ms));
+            }
+
+            async function getFreshIssue() {
+              const { data } = await github.rest.issues.get({
+                owner,
+                repo,
+                issue_number
+              });
+              return data;
+            }
+
+            function getDecisionState(issueData) {
+              const currentLabels = (issueData.labels || []).map(label => label.name);
+              return {
+                labels: currentLabels,
+                normalizedLabels: currentLabels.map(label => label.toLowerCase()),
+                priorityLabel: currentLabels.find(label => label.toLowerCase().startsWith('priority: ')) || 'Not set',
+                levelLabel: currentLabels.find(label => label.toLowerCase().startsWith('level: ')) || 'Not set',
+                assignees: issueData.assignees || []
+              };
+            }
+
             async function actorCanMakeMaintainerDecision() {
               try {
                 const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
@@ -175,8 +200,39 @@ jobs:
               }
             }
 
+            async function deleteBotCommentsByMarkers(markers) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number,
+                per_page: 100
+              });
+              const commentsToDelete = comments.filter(comment =>
+                comment.user.type === 'Bot' &&
+                comment.body &&
+                markers.some(marker => comment.body.includes(marker))
+              );
+
+              for (const comment of commentsToDelete) {
+                try {
+                  await github.rest.issues.deleteComment({
+                    owner,
+                    repo,
+                    comment_id: comment.id
+                  });
+                } catch (error) {
+                  if (error.status === 403) {
+                    core.warning(`Could not delete old issue automation comment: ${error.message}`);
+                    return;
+                  }
+                  throw error;
+                }
+              }
+            }
+
+            const isAssignmentEvent = action === 'assigned';
             const hasMaintainerDecisionLabel = maintainerLabels.some(label => normalizedLabels.includes(label));
-            if (!hasMaintainerDecisionLabel) return;
+            if (!hasMaintainerDecisionLabel && !isAssignmentEvent) return;
 
             const canDecide = await actorCanMakeMaintainerDecision();
             if (!canDecide) {
@@ -258,15 +314,39 @@ jobs:
               return;
             }
 
-            if (!normalizedLabels.includes('go ahead')) return;
+            let decisionIssue = issue;
+            let decisionState = getDecisionState(decisionIssue);
 
-            const assignees = issue.assignees || [];
-            if (assignees.length === 0) {
+            if (!decisionState.normalizedLabels.includes('go ahead')) {
+              if (!isAssignmentEvent) return;
+
+              await sleep(120000);
+              decisionIssue = await getFreshIssue();
+              decisionState = getDecisionState(decisionIssue);
+
+              if (!decisionState.normalizedLabels.includes('go ahead') && decisionState.assignees.length > 0) {
+                await addLabels(issue_number, ['go ahead']);
+                decisionIssue = await getFreshIssue();
+                decisionState = getDecisionState(decisionIssue);
+              }
+            }
+
+            if (!decisionState.normalizedLabels.includes('go ahead')) return;
+
+            if (decisionState.assignees.length === 0) {
+              await sleep(120000);
+              decisionIssue = await getFreshIssue();
+              decisionState = getDecisionState(decisionIssue);
+            }
+
+            if (decisionState.assignees.length === 0) {
               const marker = '<!-- voiceforge-issue-go-ahead-waiting -->';
+              const maintainerMention = `@${context.actor}`;
               const body =
                 `${marker}\n` +
                 `## Approved, Waiting For Assignee\n\n` +
-                `This issue has been marked \`go ahead\`, but no contributor is assigned yet.\n\n` +
+                `${maintainerMention}, this issue has been marked \`go ahead\`, but no contributor is assigned yet.\n\n` +
+                `Please assign the approved contributor so the start-work guidance can be posted.\n\n` +
                 `Please wait until a maintainer selects an assignee. Start-work guidance will be posted after assignment.\n\n` +
                 `_VoiceForge automation_`;
               await createOrUpdateComment(marker, body);
@@ -275,20 +355,24 @@ jobs:
               return;
             }
 
-            const assigneeMentions = assignees.map(assignee => `@${assignee.login}`).join(', ');
+            const assigneeMentions = decisionState.assignees.map(assignee => `@${assignee.login}`).join(', ');
             const marker = '<!-- voiceforge-issue-go-ahead -->';
             const body =
               `${marker}\n` +
               `## Work Approved To Start\n\n` +
               `Hi ${assigneeMentions}, this issue has been reviewed and approved for work by the maintainer team.\n\n` +
               `You may start now. Keep the work focused on this issue and maintainer comments.\n\n` +
-              `- Priority: ${priorityLabel}\n` +
-              `- Difficulty: ${levelLabel}\n` +
-              `- PR: use the matching program template and include \`Closes #${issue_number}\`\n` +
-              `- Author check: open the PR from the assigned account\n\n` +
+              `Priority: ${decisionState.priorityLabel}\n` +
+              `Difficulty: ${decisionState.levelLabel}\n` +
+              `PR: use the matching program template and include \`Closes #${issue_number}\`\n` +
+              `Author check: open the PR from the assigned account\n\n` +
               `If you cannot continue, please comment here so maintainers can reopen the assignment for another contributor.\n\n` +
               `_VoiceForge automation_`;
 
             await addLabels(issue_number, ['ready to work']);
             await removeLabels(['needs maintainer review', 'stale-assignment']);
+            await deleteBotCommentsByMarkers([
+              '<!-- voiceforge-issue-assigned-',
+              '<!-- voiceforge-issue-go-ahead-waiting -->'
+            ]);
             await createOrUpdateComment(marker, body);
