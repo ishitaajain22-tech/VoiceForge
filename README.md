@@ -3,6 +3,24 @@
 
 VoiceForge is a browser-based assistive video tool that lets a user type during calls and output cloned speech with a lip-synced face preview.
 
+---
+
+## 📑 Table of Contents
+
+- [Why This Exists](#why-this-exists)
+- [Tech Stack](#tech-stack)
+- [Browser Compatibility](#browser-compatibility)
+- [Setup](#setup)
+- [Environment Variables](#environment-variables)
+- [Using VoiceForge In A Call](#using-voiceforge-in-a-call)
+- [OBS Virtual Camera Setup](#obs-virtual-camera-setup)
+- [API](#api)
+- [Roadmap](#roadmap)
+- [License](#license)
+- [About](#about)
+
+---
+
 ## Why This Exists
 
 Deaf and speech-impaired people on video calls are often pushed into chat boxes, delayed interpretation, or awkward turn-taking. VoiceForge explores a local-first interface where typed intent can become spoken audio and a synchronized visual feed, helping the user participate in the same conversational channel as everyone else.
