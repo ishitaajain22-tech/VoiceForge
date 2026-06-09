@@ -169,7 +169,7 @@ jobs:
               return;
             }
 
-            if (context.eventName === 'pull_request_review' && context.payload.review?.state === 'changes_requested') {
+            if (context.eventName === 'pull_request_review' && context.payload.review?.state?.toLowerCase() === 'changes_requested') {
               await addLabels(['needs revision']);
               await removeLabel('ready for review');
               const marker = '<!-- voiceforge-pr-needs-revision -->';

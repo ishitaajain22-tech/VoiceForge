@@ -25,7 +25,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const reviewer     = context.payload.review.user.login;
-            const reviewState  = context.payload.review.state;   // APPROVED | CHANGES_REQUESTED | COMMENTED
+            const reviewState  = context.payload.review.state.toLowerCase();   // Normalize to lowercase: approved | changes_requested | commented
             const pr           = context.payload.pull_request;
             const owner        = context.repo.owner;
             const repo         = context.repo.repo;
