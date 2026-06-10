@@ -28,7 +28,12 @@ jobs:
             const repo = context.repo.repo;
             const runId = context.payload.workflow_run.id;
             
+            const headSha = context.payload.workflow_run.head_sha;
+
+            // Step 1: payload pull_requests array (works for same-repo PRs)
             let pr = context.payload.workflow_run.pull_requests?.[0];
+
+            // Step 2: re-fetch workflow run in case payload was trimmed
             if (!pr) {
               try {
                 const { data: run } = await github.rest.actions.getWorkflowRun({
@@ -36,29 +41,51 @@ jobs:
                 });
                 pr = run.pull_requests?.[0];
               } catch (err) {
-                core.warning(`Could not fetch workflow run: ${err.message}`);
+                core.warning(`Could not fetch workflow run details: ${err.message}`);
               }
             }
-            
+
+            // Step 3: listPullRequestsAssociatedWithCommit (works for non-fork commits)
             if (!pr) {
               try {
-                const headSha = context.payload.workflow_run.head_sha;
                 const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
                   owner, repo, commit_sha: headSha
                 });
-                pr = prs?.[0];
+                pr = prs.find(p => p.state === 'open') || prs?.[0];
+                if (pr) core.info(`Found PR #${pr.number} via commit association.`);
               } catch (err) {
-                core.warning(`Could not find pull requests for SHA ${context.payload.workflow_run.head_sha}: ${err.message}`);
+                core.warning(`listPullRequestsAssociatedWithCommit failed: ${err.message}`);
               }
             }
-            
+
+            // Step 4: scan ALL open PRs and match by head SHA
+            // This is the critical fallback for fork PRs — fork commits are not
+            // indexed by listPullRequestsAssociatedWithCommit, but pulls.list
+            // returns full head info including SHA for every open PR.
+            if (!pr) {
+              try {
+                core.info(`Scanning open PRs for head SHA ${headSha}...`);
+                const openPrs = await github.paginate(github.rest.pulls.list, {
+                  owner, repo, state: 'open', per_page: 100
+                });
+                pr = openPrs.find(p => p.head.sha === headSha);
+                if (pr) {
+                  core.info(`Found PR #${pr.number} by scanning open PRs for SHA ${headSha}.`);
+                } else {
+                  core.warning(`No open PR found with head SHA ${headSha}. Skipping.`);
+                }
+              } catch (err) {
+                core.warning(`Could not scan open PRs: ${err.message}`);
+              }
+            }
+
             if (!pr) {
               core.info('Could not determine pull request associated with this workflow run. Skipping.');
               return;
             }
             
             const issue_number = pr.number;
-            const headSha = pr.head.sha;
+            const prHeadSha = pr.head?.sha || headSha;
             
             core.info(`Processing review state for PR #${issue_number} (SHA: ${headSha})`);
             
@@ -172,7 +199,7 @@ jobs:
             async function setStatus(state, description) {
               try {
                 await github.rest.repos.createCommitStatus({
-                  owner, repo, sha: headSha, state, context: STATUS_CONTEXT, description
+                  owner, repo, sha: prHeadSha, state, context: STATUS_CONTEXT, description
                 });
                 core.info(`Posted commit status: ${state} — "${description}"`);
               } catch (err) {

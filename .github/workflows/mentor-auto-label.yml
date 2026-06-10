@@ -22,7 +22,7 @@ jobs:
       - name: Apply mentor label (and ready-for-review on approval) when a mentor reviews
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.MENTOR_LABEL_PAT }}
           script: |
             const reviewer     = context.payload.review.user.login;
             const reviewState  = context.payload.review.state.toLowerCase();   // Normalize to lowercase: approved | changes_requested | commented
