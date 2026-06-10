@@ -8,6 +8,6 @@ const router = Router();
 
 router.post("/clone", upload.single("audio"), cloneVoice);
 router.post("/speak", speak);
-router.get("/speak/stream/:token", streamSpeech);
+router.get("/speak/stream", streamSpeech);
 
 export default router;
