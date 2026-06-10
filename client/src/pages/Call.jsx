@@ -117,7 +117,7 @@ export default function Call() {
     return () => {
       activeStream?.getTracks().forEach((track) => track.stop());
     };
-  }, []);
+  }, [showToast]);
 
   async function handleSpeak(text) {
     if (!activeProfile?.voice_id) return;
