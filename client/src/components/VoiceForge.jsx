@@ -86,15 +86,19 @@ export default function VoiceForge() {
       return;
     }
 
-    navigator.clipboard
-      .writeText(target)
-      .then(() => showToast("Copied to clipboard", "success"))
-      .catch(() => {
-        // execCommand('copy') is deprecated and removed in some secure contexts
-        // (e.g. iframes, extensions). Rather than silently failing or leaking a
-        // temporary <textarea> into the DOM, we surface a clear, actionable error.
-        showToast("Copy failed — please select the text and copy manually", "error");
-      });
+    // Guard against synchronous throws (e.g. navigator.clipboard is undefined
+    // in non-secure contexts or older browsers) as well as async Promise
+    // rejections — both must surface the same actionable error toast.
+    try {
+      navigator.clipboard
+        .writeText(target)
+        .then(() => showToast("Copied to clipboard", "success"))
+        .catch(() => {
+          showToast("Copy failed — please select the text and copy manually", "error");
+        });
+    } catch {
+      showToast("Copy failed — please select the text and copy manually", "error");
+    }
   }, [inputText, showToast]);
 
   const handleQuickReply = useCallback((phrase) => {
