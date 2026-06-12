@@ -146,6 +146,21 @@ export default function Settings() {
     if (!file) return;
 
     try {
+      // 1. File size check (15MB limit to prevent browser freezing)
+      const MAX_FILE_SIZE = 15 * 1024 * 1024;
+      if (file.size > MAX_FILE_SIZE) {
+        throw new Error("File is too large. Maximum size allowed is 15MB.");
+      }
+
+      // 2. Overwrite confirmation
+      const confirmOverwrite = window.confirm(
+        "Importing this backup will overwrite your current settings, speech history, and voice profiles. Do you want to continue?"
+      );
+      if (!confirmOverwrite) {
+        event.target.value = "";
+        return;
+      }
+
       const text = await file.text();
       const backup = JSON.parse(text);
 
@@ -154,14 +169,9 @@ export default function Settings() {
       }
 
       const { storage, profiles: importedProfiles } = backup;
-      if (storage.history) localStorage.setItem("vf_history", storage.history);
-      if (storage.favorites) localStorage.setItem("vf_favorites", storage.favorites);
-      if (storage.quick_replies) localStorage.setItem("vf_quick_replies", storage.quick_replies);
-      if (storage.voiceSettings) localStorage.setItem("voiceforge:voiceSettings", storage.voiceSettings);
-      if (storage.calibrationXOffset) localStorage.setItem("voiceforge:calibrationXOffset", storage.calibrationXOffset);
-      if (storage.calibrationYOffset) localStorage.setItem("voiceforge:calibrationYOffset", storage.calibrationYOffset);
-      if (storage.calibrationScale) localStorage.setItem("voiceforge:calibrationScale", storage.calibrationScale);
 
+      // 3. Process voice profiles first - if any fail, we don't modify localStorage
+      const profilesToSave = [];
       for (const p of importedProfiles) {
         let audioBlob = null;
         if (p.audioDataUrl) {
@@ -176,14 +186,40 @@ export default function Settings() {
           audioBlob = new Blob([u8arr], { type: mime });
         }
 
-        const profileData = {
+        profilesToSave.push({
           id: p.voice_id,
           voice_id: p.voice_id,
           name: p.name,
           createdAt: p.createdAt || new Date().toISOString(),
           audioBlob,
-        };
+        });
+      }
+
+      // Commit profiles to IndexedDB
+      for (const profileData of profilesToSave) {
         await saveProfile(profileData);
+      }
+
+      // 4. Update localStorage keys (faithfully reproducing empty/null values)
+      const keysMap = {
+        history: "vf_history",
+        favorites: "vf_favorites",
+        quick_replies: "vf_quick_replies",
+        voiceSettings: "voiceforge:voiceSettings",
+        calibrationXOffset: "voiceforge:calibrationXOffset",
+        calibrationYOffset: "voiceforge:calibrationYOffset",
+        calibrationScale: "voiceforge:calibrationScale",
+      };
+
+      for (const [backupKey, storageKey] of Object.entries(keysMap)) {
+        if (backupKey in storage) {
+          const val = storage[backupKey];
+          if (val === null || val === undefined) {
+            localStorage.removeItem(storageKey);
+          } else {
+            localStorage.setItem(storageKey, val);
+          }
+        }
       }
 
       showToast("Data imported successfully", "success");
