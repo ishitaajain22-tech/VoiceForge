@@ -10,6 +10,15 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
+if (process.env.NODE_ENV === "production" && !process.env.STREAM_SECRET?.trim()) {
+  console.error(
+    "[VoiceForge] FATAL: STREAM_SECRET is not set in production. " +
+    "All speech tokens would be invalidated on every server restart. " +
+    "Set STREAM_SECRET in your environment and restart."
+  );
+  process.exit(1);
+}
+
 // Warn clearly when mock mode is active so it is never silently enabled.
 if (process.env.MOCK_ELEVENLABS === "true" && process.env.NODE_ENV !== "production") {
   console.warn(
