@@ -219,13 +219,8 @@ export default function App() {
       
       <KeyboardShortcutsModal isOpen={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <ScrollToBottomButton activeTab={activeTab} />
-<<<<<<< Updated upstream
-      <Footer onNavigate={navigateTo} tabs={tabs} />
-
-=======
       <ScrollToTopButton activeTab={activeTab} />
-      <Footer onNavigate={selectTab} tabs={tabs} />
->>>>>>> Stashed changes
+      <Footer onNavigate={navigateTo} tabs={tabs} />
 
     </div>
   );
