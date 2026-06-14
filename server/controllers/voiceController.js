@@ -14,7 +14,7 @@ const MOCK_AUDIO_MP3 = Buffer.from(
   "base64"
 );
 
-const STREAM_SECRET = process.env.STREAM_SECRET?.trim() ?? (() => {
+const STREAM_SECRET = process.env.STREAM_SECRET?.trim() || (() => {
   if (process.env.NODE_ENV === "production") {
     throw new Error("[VoiceForge] FATAL: STREAM_SECRET must be set in production.");
   }
