@@ -2,6 +2,7 @@
 import "dotenv/config";
 import cors from "cors";
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import voiceRoutes from "./routes/voice.js";
 
 import path from "path";
@@ -19,11 +20,11 @@ if (process.env.NODE_ENV === "production" && !process.env.STREAM_SECRET?.trim())
 }
 
 // Warn clearly when mock mode is active so it is never silently enabled.
-if (process.env.MOCK_ELEVENLABS === "true" && process.env.NODE_ENV !== "production") {
+if (process.env.MOCK_CHATTERBOX === "true" && process.env.NODE_ENV !== "production") {
   console.warn(
-    "\x1b[33m[VoiceForge] MOCK_ELEVENLABS=true — ElevenLabs calls are stubbed." +
+    "\x1b[33m[VoiceForge] Mock mode active — Chatterbox calls are stubbed." +
     " Voice clone returns a fixture voice_id; TTS streams silent audio." +
-    " Remove this flag to use real ElevenLabs responses.\x1b[0m"
+    " Unset MOCK_CHATTERBOX to use the real Hugging Face engine.\x1b[0m"
   );
 }
 
@@ -31,6 +32,17 @@ const app = express();
 const port = process.env.PORT || 3001;
 const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
 
+// Global rate limiter: 100 requests per 15 minutes per IP
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) =>
+    res.status(429).json({ error: "Too Many Requests" })
+});
+
+app.use(globalLimiter);
 // Enable trust proxy so rate limiters can identify real client IPs
 app.set("trust proxy", 1);
 
