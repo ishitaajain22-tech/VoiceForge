@@ -1,5 +1,5 @@
 // Starts the local Express API that proxies VoiceForge requests to ElevenLabs.
-import "dotenv/config";
+import dotenv from "dotenv";
 import cors from "cors";
 import express from "express";
 import { rateLimit } from "express-rate-limit";
@@ -8,7 +8,7 @@ import voiceRoutes from "./routes/voice.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
 if (process.env.NODE_ENV === "production" && !process.env.STREAM_SECRET?.trim()) {
   console.error(
